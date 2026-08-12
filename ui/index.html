@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kinect Layers</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #09090e;
+    --border:    rgba(255,255,255,0.07);
+    --accent:    #4d9fff;
+    --accent2:   #c64dff;
+    --green:     #4dffb0;
+    --text:      #d0d4e8;
+    --muted:     #555870;
+    --layer-h:   46px;
+    --sidebar-w: 310px;
+    --radius:    8px;
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    user-select: none;
+  }
+
+  #glCanvas {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    display: block;
+  }
+
+  #app {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    pointer-events: none;
+  }
+
+  header {
+    pointer-events: all;
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 18px; height: 42px;
+    background: rgba(9,9,14,0.8);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(14px);
+    flex-shrink: 0;
+  }
+  .logo { font-size:11px; font-weight:700; letter-spacing:2.5px; text-transform:uppercase; color:var(--accent); }
+  .logo-dot { color:var(--accent2); margin:0 2px; }
+  .sep { flex:1; }
+  .badge {
+    font-size:9px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase;
+    padding:3px 8px; border-radius:12px;
+    background:rgba(77,159,255,0.1); color:var(--accent);
+    border:1px solid rgba(77,159,255,0.18);
+  }
+
+  #main { flex:1; display:flex; overflow:hidden; }
+
+  #preview { flex:1; position:relative; overflow:hidden; }
+
+  #mglow {
+    position:absolute; width:200px; height:200px; border-radius:50%;
+    pointer-events:none; transform:translate(-50%,-50%);
+    background:radial-gradient(circle,rgba(77,159,255,0.15) 0%,transparent 70%);
+    filter:blur(22px); mix-blend-mode:screen;
+  }
+  #mdot {
+    position:absolute; width:8px; height:8px; border-radius:50%;
+    pointer-events:none; transform:translate(-50%,-50%);
+    background:rgba(77,159,255,1);
+    box-shadow:0 0 10px 3px rgba(77,159,255,0.6);
+  }
+  #mring {
+    position:absolute; width:32px; height:32px; border-radius:50%;
+    pointer-events:none; transform:translate(-50%,-50%);
+    border:1px solid rgba(77,159,255,0.35);
+    transition:width .12s,height .12s,opacity .2s;
+  }
+
+  #sidebar {
+    pointer-events:all; width:var(--sidebar-w); flex-shrink:0;
+    display:flex; flex-direction:column;
+    background:rgba(9,9,14,0.65);
+    border-left:1px solid var(--border);
+    backdrop-filter:blur(20px);
+    overflow-y:auto; overflow-x:hidden;
+  }
+  #sidebar::-webkit-scrollbar { width:3px; }
+  #sidebar::-webkit-scrollbar-track { background:transparent; }
+  #sidebar::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:3px; }
+
+  .panel { padding:14px 16px 18px; border-bottom:1px solid var(--border); }
+  .panel-hd {
+    font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase;
+    color:var(--muted); margin-bottom:12px;
+    display:flex; align-items:center; gap:8px;
+  }
+  .panel-hd::after { content:''; flex:1; height:1px; background:var(--border); }
+
+  #layers { display:flex; flex-direction:column; gap:3px; }
+
+  .lyr {
+    display:flex; align-items:center; gap:7px;
+    height:var(--layer-h); padding:0 8px 0 7px;
+    border-radius:var(--radius); border:1px solid transparent;
+    cursor:pointer; transition:background .12s,border-color .12s;
+  }
+  .lyr:hover { background:rgba(255,255,255,0.04); }
+  .lyr.sel { background:rgba(77,159,255,0.08); border-color:rgba(77,159,255,0.22); }
+  .lyr.drag-over { border-color:var(--accent); background:rgba(77,159,255,0.1); }
+  .lyr.dragging { opacity:0.35; }
+
+  .dh { color:var(--muted); font-size:12px; cursor:grab; line-height:1; padding:0 2px; flex-shrink:0; }
+  .dh:active { cursor:grabbing; }
+
+  .th {
+    width:30px; height:30px; border-radius:5px; flex-shrink:0;
+    border:1px solid var(--border); overflow:hidden;
+  }
+  .th canvas { width:100%; height:100%; display:block; }
+  .th.checker {
+    background-image:
+      linear-gradient(45deg,#1a1a2a 25%,transparent 25%),
+      linear-gradient(-45deg,#1a1a2a 25%,transparent 25%),
+      linear-gradient(45deg,transparent 75%,#1a1a2a 75%),
+      linear-gradient(-45deg,transparent 75%,#1a1a2a 75%);
+    background-size:8px 8px;
+    background-position:0 0,0 4px,4px -4px,-4px 0;
+  }
+
+  .li { flex:1; min-width:0; }
+  .ln { font-size:12px; font-weight:500; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lt { font-size:10px; color:var(--muted); margin-top:1px; }
+
+  .eyebtn {
+    width:22px; height:22px; border-radius:4px; border:none;
+    background:transparent; color:var(--accent); cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:color .12s,background .12s; padding:0; flex-shrink:0;
+  }
+  .eyebtn:hover { background:rgba(255,255,255,0.06); }
+  .eyebtn.off { color:var(--muted); opacity:.4; }
+
+  .lyr.dsync {
+    background:linear-gradient(90deg,rgba(198,77,255,0.07),rgba(77,159,255,0.04));
+    border-color:rgba(198,77,255,0.18);
+  }
+  .lyr.dsync .ln { color:#d48aff; }
+  .pulse {
+    width:7px; height:7px; border-radius:50%; flex-shrink:0;
+    background:var(--accent2); box-shadow:0 0 6px 2px var(--accent2);
+    animation:blink 2s ease-in-out infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.65)} }
+
+  .ctrls { display:flex; flex-direction:column; gap:14px; }
+  .cg { display:flex; flex-direction:column; gap:5px; }
+  .crow { display:flex; align-items:center; justify-content:space-between; }
+  .clbl { font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); }
+  .cval { font-size:11px; font-weight:700; color:var(--accent); min-width:38px; text-align:right; font-variant-numeric:tabular-nums; }
+
+  .st { position:relative; height:26px; display:flex; align-items:center; }
+  input[type=range] {
+    -webkit-appearance:none; appearance:none;
+    width:100%; height:4px; border-radius:2px;
+    background:rgba(255,255,255,0.07);
+    outline:none; cursor:pointer; position:relative; z-index:1;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance:none;
+    width:15px; height:15px; border-radius:50%; background:#fff;
+    box-shadow:0 0 0 2px var(--accent),0 2px 8px rgba(0,0,0,0.6);
+    cursor:grab; transition:box-shadow .12s,transform .08s;
+  }
+  input[type=range]::-webkit-slider-thumb:hover {
+    box-shadow:0 0 0 3px var(--accent),0 0 14px rgba(77,159,255,0.55);
+    transform:scale(1.15);
+  }
+  input[type=range]::-webkit-slider-thumb:active { cursor:grabbing; transform:scale(1.22); }
+  input[type=range]::-moz-range-thumb {
+    width:15px; height:15px; border-radius:50%; background:#fff;
+    border:none; box-shadow:0 0 0 2px var(--accent); cursor:grab;
+  }
+
+  .sfill {
+    position:absolute; left:0; height:4px; border-radius:2px;
+    background:linear-gradient(90deg,var(--accent),var(--accent2));
+    pointer-events:none; z-index:0;
+  }
+  .smid {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:2px; height:9px; background:var(--muted);
+    border-radius:1px; pointer-events:none; opacity:.35;
+  }
+  .smarks { display:flex; justify-content:space-between; padding:0 1px; }
+  .sm { font-size:9px; color:var(--muted); }
+
+  .axrow { display:flex; align-items:center; gap:5px; }
+  .ax { font-size:11px; color:var(--muted); }
+
+  .addmap {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:5px 11px; border-radius:6px;
+    background:rgba(255,255,255,0.05); border:1px solid var(--border);
+    color:var(--text); font-size:11px; font-weight:500; cursor:pointer;
+    transition:background .12s,border-color .12s; margin-bottom:10px;
+  }
+  .addmap:hover { background:rgba(77,159,255,0.1); border-color:rgba(77,159,255,0.3); color:var(--accent); }
+  .addmap input { display:none; }
+
+  .mprev {
+    width:100%; height:38px; border-radius:6px;
+    border:1px dashed rgba(255,255,255,0.1);
+    overflow:hidden; margin-bottom:10px;
+    background:rgba(255,255,255,0.02);
+    display:flex; align-items:center; justify-content:center;
+    color:var(--muted); font-size:10px; position:relative;
+  }
+  .mprev.loaded { border-style:solid; justify-content:flex-start; }
+  .mprev img { width:100%; height:100%; object-fit:cover; opacity:.8; }
+  .mprev .mlbl {
+    position:absolute; right:6px; font-size:9px; color:var(--muted);
+    background:rgba(9,9,14,.75); padding:2px 5px; border-radius:3px;
+  }
+
+  .togrow { display:flex; align-items:center; justify-content:space-between; margin-top:10px; }
+  .togwrap { display:flex; border-radius:6px; border:1px solid var(--border); overflow:hidden; }
+  .togbtn {
+    padding:5px 16px; font-size:10px; font-weight:700; letter-spacing:1px;
+    border:none; cursor:pointer; transition:background .12s,color .12s;
+    background:transparent; color:var(--muted); text-transform:uppercase;
+  }
+  .togbtn.on.act { background:rgba(77,255,176,0.14); color:var(--green); box-shadow:inset 0 0 0 1px rgba(77,255,176,.22); }
+  .togbtn.off.act { background:rgba(255,60,60,0.12); color:#ff7070; box-shadow:inset 0 0 0 1px rgba(255,60,60,.18); }
+  .togbtn:not(.act):hover { color:var(--text); background:rgba(255,255,255,0.04); }
+
+  .dspanel {
+    background:rgba(198,77,255,0.04); border:1px solid rgba(198,77,255,0.14);
+    border-radius:7px; padding:11px; margin-top:6px;
+  }
+  .dsdesc { font-size:10px; color:var(--muted); line-height:1.55; margin-bottom:9px; }
+  .capbtn {
+    display:flex; align-items:center; justify-content:center; gap:7px;
+    width:100%; padding:8px; border-radius:6px;
+    background:rgba(198,77,255,0.12); border:1px solid rgba(198,77,255,0.24);
+    color:#d48aff; font-size:11px; font-weight:600; cursor:pointer;
+    transition:background .12s;
+  }
+  .capbtn:hover { background:rgba(198,77,255,0.22); }
+  .capst { font-size:10px; text-align:center; margin-top:6px; color:var(--muted); min-height:14px; }
+  .capst.ok { color:var(--accent2); }
+  .capst.err { color:#ff7070; }
+
+  #perf {
+    position:fixed; top:50px; left:14px;
+    font-size:9px; color:rgba(255,255,255,0.18);
+    pointer-events:none; letter-spacing:1px; font-variant-numeric:tabular-nums;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="glCanvas"></canvas>
+
+<div id="app">
+  <header>
+    <span class="logo">Kinect<span class="logo-dot">·</span>Layers</span>
+    <span class="sep"></span>
+    <span class="badge">WebGL2 · 60fps</span>
+  </header>
+
+  <div id="main">
+    <div id="preview">
+      <div id="mglow"></div>
+      <div id="mdot"></div>
+      <div id="mring"></div>
+    </div>
+
+    <aside id="sidebar">
+
+      <div class="panel">
+        <div class="panel-hd">Layers</div>
+        <div id="layers">
+
+          <div class="lyr sel" data-id="fg" draggable="true">
+            <span class="dh">&#10303;</span>
+            <div class="th" id="th-fg"></div>
+            <div class="li"><div class="ln">Foreground</div><div class="lt">Mouse Reactive</div></div>
+            <button class="eyebtn" data-id="fg">
+              <svg width="15" height="11" viewBox="0 0 15 11" fill="none">
+                <path d="M7.5 1C4.5 1 2 4 1.5 5.5C2 7 4.5 10 7.5 10C10.5 10 13 7 13.5 5.5C13 4 10.5 1 7.5 1Z" stroke="currentColor" stroke-width="1.3" fill="none"/>
+                <circle cx="7.5" cy="5.5" r="2" fill="currentColor"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="lyr dsync" data-id="desktop" draggable="true">
+            <span class="dh">&#10303;</span>
+            <div class="th" id="th-desktop"></div>
+            <div class="li"><div class="ln">Desktop BG Sync</div><div class="lt">Live Capture</div></div>
+            <span class="pulse"></span>
+            <button class="eyebtn" data-id="desktop">
+              <svg width="15" height="11" viewBox="0 0 15 11" fill="none">
+                <path d="M7.5 1C4.5 1 2 4 1.5 5.5C2 7 4.5 10 7.5 10C10.5 10 13 7 13.5 5.5C13 4 10.5 1 7.5 1Z" stroke="currentColor" stroke-width="1.3" fill="none"/>
+                <circle cx="7.5" cy="5.5" r="2" fill="currentColor"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="lyr" data-id="disp" draggable="true">
+            <span class="dh">&#10303;</span>
+            <div class="th checker" id="th-disp"></div>
+            <div class="li"><div class="ln">Displacement Map</div><div class="lt">Warp &middot; Normal</div></div>
+            <button class="eyebtn" data-id="disp">
+              <svg width="15" height="11" viewBox="0 0 15 11" fill="none">
+                <path d="M7.5 1C4.5 1 2 4 1.5 5.5C2 7 4.5 10 7.5 10C10.5 10 13 7 13.5 5.5C13 4 10.5 1 7.5 1Z" stroke="currentColor" stroke-width="1.3" fill="none"/>
+                <circle cx="7.5" cy="5.5" r="2" fill="currentColor"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="lyr" data-id="bg" draggable="true">
+            <span class="dh">&#10303;</span>
+            <div class="th" id="th-bg"></div>
+            <div class="li"><div class="ln">Background</div><div class="lt">Base Layer</div></div>
+            <button class="eyebtn" data-id="bg">
+              <svg width="15" height="11" viewBox="0 0 15 11" fill="none">
+                <path d="M7.5 1C4.5 1 2 4 1.5 5.5C2 7 4.5 10 7.5 10C10.5 10 13 7 13.5 5.5C13 4 10.5 1 7.5 1Z" stroke="currentColor" stroke-width="1.3" fill="none"/>
+                <circle cx="7.5" cy="5.5" r="2" fill="currentColor"/>
+              </svg>
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-hd">Controls</div>
+        <div class="ctrls">
+
+          <div class="cg">
+            <div class="crow">
+              <div class="axrow"><span class="ax">&#9668;</span><span class="clbl">3D</span><span class="ax">&#9658;</span></div>
+              <span class="cval" id="v3d">0%</span>
+            </div>
+            <div class="st">
+              <div class="sfill" id="f3d" style="width:0%"></div>
+              <input type="range" id="s3d" min="0" max="100" value="0">
+            </div>
+            <div class="smarks"><span class="sm">0%</span><span class="sm">PARALLAX</span><span class="sm">100%</span></div>
+          </div>
+
+          <div class="cg">
+            <div class="crow"><span class="clbl">FX</span><span class="cval" id="vfx">50%</span></div>
+            <div class="st">
+              <div class="sfill" id="ffx" style="width:50%"></div>
+              <div class="smid"></div>
+              <input type="range" id="sfx" min="0" max="100" value="50">
+            </div>
+            <div class="smarks"><span class="sm">0%</span><span class="sm">50%</span><span class="sm">100%</span></div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-hd">Displacement FX</div>
+        <label class="addmap">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <rect x="1" y="1" width="4.5" height="4.5" rx="1" fill="currentColor" opacity=".7"/>
+            <rect x="6.5" y="1" width="4.5" height="4.5" rx="1" fill="currentColor" opacity=".5"/>
+            <rect x="1" y="6.5" width="4.5" height="4.5" rx="1" fill="currentColor" opacity=".5"/>
+            <rect x="6.5" y="6.5" width="4.5" height="4.5" rx="1" fill="currentColor" opacity=".3"/>
+          </svg>
+          Add Map
+          <input type="file" id="dispfile" accept="image/*">
+        </label>
+        <div class="mprev" id="mprev"><span>No map — using procedural noise</span></div>
+        <div class="cg">
+          <div class="crow"><span class="clbl">Strength</span><span class="cval" id="vd">50%</span></div>
+          <div class="st">
+            <div class="sfill" id="fd" style="width:50%"></div>
+            <input type="range" id="sd" min="0" max="100" value="50">
+          </div>
+          <div class="smarks"><span class="sm">0%</span><span class="sm">100%</span></div>
+        </div>
+        <div class="togrow">
+          <span class="clbl">Displacement</span>
+          <div class="togwrap" id="dtog">
+            <button class="togbtn on act" data-s="on">ON</button>
+            <button class="togbtn off" data-s="off">OFF</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-hd">Desktop Sync</div>
+        <div class="dspanel">
+          <div class="dsdesc">Capture your live desktop wallpaper and blend it into the background. The displacement map then warps it in real time.</div>
+          <button class="capbtn" id="capbtn">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <rect x="1" y="2.5" width="11" height="8.5" rx="1.8" stroke="currentColor" stroke-width="1.3" fill="none"/>
+              <circle cx="6.5" cy="6.5" r="2.2" fill="currentColor" opacity=".85"/>
+              <rect x="4.5" y="1" width="4" height="2" rx=".8" fill="currentColor" opacity=".5"/>
+            </svg>
+            Capture Desktop BG
+          </button>
+          <div class="capst" id="capst"></div>
+        </div>
+      </div>
+
+    </aside>
+  </div>
+</div>
+
+<div id="perf"></div>
+
+<script>
+'use strict';
+
+const S={
+  mx:.5,my:.5,sx:.5,sy:.5,svx:0,svy:0,
+  par:0,fx:.5,disp:.5,dispOn:true,
+  dispTex:null,deskTex:null,deskOn:false,
+  vis:{fg:true,desktop:true,disp:true,bg:true},
+  t:0,lt:performance.now(),
+};
+
+const cv=document.getElementById('glCanvas');
+const gl=cv.getContext('webgl2',{antialias:false,alpha:false,powerPreference:'high-performance'});
+if(!gl){document.body.innerHTML='<p style="color:#f55;padding:30px;font-size:16px">WebGL2 not supported.<br>Use Chrome, Edge, or Firefox.</p>';}
+
+function resize(){cv.width=innerWidth;cv.height=innerHeight;gl.viewport(0,0,cv.width,cv.height);}
+addEventListener('resize',resize);resize();
+
+const mkS=(t,s)=>{const r=gl.createShader(t);gl.shaderSource(r,s);gl.compileShader(r);if(!gl.getShaderParameter(r,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(r));return r;};
+const mkP=(v,f)=>{const p=gl.createProgram();gl.attachShader(p,mkS(gl.VERTEX_SHADER,v));gl.attachShader(p,mkS(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);return p;};
+
+const QV=`#version 300 es\nin vec2 a;out vec2 uv;void main(){uv=a*.5+.5;gl_Position=vec4(a,0,1);}`;
+const qb=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,qb);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+function bQ(p){const l=gl.getAttribLocation(p,'a');gl.bindBuffer(gl.ARRAY_BUFFER,qb);gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,2,gl.FLOAT,false,0,0);}
+
+function mkFBO(w,h){
+  const t=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  [gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER,gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T].forEach((k,i)=>gl.texParameteri(gl.TEXTURE_2D,k,[gl.LINEAR,gl.LINEAR,gl.CLAMP_TO_EDGE,gl.CLAMP_TO_EDGE][i]));
+  const fb=gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  return{t,fb};
+}
+let A,B;
+function mkFBOs(){A=mkFBO(cv.width,cv.height);B=mkFBO(cv.width,cv.height);}
+mkFBOs();addEventListener('resize',mkFBOs);
+
+const UL=(p,n)=>gl.getUniformLocation(p,n);
+const u1f=(p,n,v)=>gl.uniform1f(UL(p,n),v);
+const u1b=(p,n,v)=>gl.uniform1i(UL(p,n),v?1:0);
+const u2f=(p,n,x,y)=>gl.uniform2f(UL(p,n),x,y);
+function bT(p,n,u,t){gl.activeTexture(gl.TEXTURE0+u);gl.bindTexture(gl.TEXTURE_2D,t);gl.uniform1i(UL(p,n),u);}
+function draw(fbo){gl.bindFramebuffer(gl.FRAMEBUFFER,fbo?fbo.fb:null);gl.viewport(0,0,cv.width,cv.height);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);}
+
+const bgP=mkP(QV,`#version 300 es
+precision highp float;
+in vec2 uv;out vec4 C;
+uniform float T;
+uniform bool hasDesk;
+uniform sampler2D deskTex;
+uniform float deskBlend;
+void main(){
+  float t=T*.1;
+  vec3 a=vec3(.04,.03,.13),b=vec3(.13,.04,.19),c=vec3(.02,.07,.16);
+  float w1=sin(uv.x*4.+t)*.5+.5;
+  float w2=cos(uv.y*3.2+t*.75)*.5+.5;
+  float w3=sin((uv.x+uv.y)*5.-t*1.4)*.5+.5;
+  vec3 col=mix(mix(a,b,w1*w2),c,w3*.45);
+  float nx=sin(uv.x*8.+t*.6)*cos(uv.y*5.+t*.4)*.5+.5;
+  col+=vec3(.04,.01,.08)*nx*.6;
+  float h=fract(sin(dot(floor(uv*220.),vec2(127.1,311.7)))*43758.5);
+  float star=step(.986,h);
+  col+=star*(sin(T*2.2+h*6.28)*.5+.5)*vec3(.6,.75,1.)*.45;
+  if(hasDesk) col=mix(col,texture(deskTex,uv).rgb,deskBlend);
+  C=vec4(col,1.);
+}`);
+
+const dpP=mkP(QV,`#version 300 es
+precision highp float;
+in vec2 uv;out vec4 C;
+uniform sampler2D scene,dispMap;
+uniform bool hasMap,enabled;
+uniform float str,T,asp;
+float h(vec2 p){p=fract(p*vec2(234.34,435.35));p+=dot(p,p+34.23);return fract(p.x*p.y);}
+float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}
+float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<6;i++){v+=a*vn(p);p*=2.1;a*=.5;}return v;}
+void main(){
+  vec2 u=uv;
+  if(enabled){
+    vec2 d;
+    if(hasMap){ d=(texture(dispMap,u).rg-.5)*2.; }
+    else{ vec2 p=u*vec2(asp,1.)*3.+T*.07; d=vec2(fbm(p+vec2(1.7,9.2))-.5,fbm(p+vec2(8.3,2.8))-.5)*2.; }
+    u=clamp(u+d*str*.065,.001,.999);
+  }
+  C=texture(scene,u);
+}`);
+
+const fgP=mkP(QV,`#version 300 es
+precision highp float;
+in vec2 uv;out vec4 C;
+uniform sampler2D scene;
+uniform vec2 mouse,spring;
+uniform float par,fx,T;
+uniform bool fgVis;
+vec2 barrel(vec2 u,float k){vec2 c=u-.5;return u+c*dot(c,c)*k;}
+void main(){
+  vec2 u=uv-(spring-.5)*par*.18;
+  if(par>.01) u=barrel(u,par*.09);
+  u=clamp(u,.001,.999);
+  vec4 col=texture(scene,u);
+  vec2 vc=uv-.5;
+  col.rgb*=clamp(1.-dot(vc,vc)*fx*3.8,0.,1.);
+  if(fx>.04){
+    float ca=fx*.005;
+    col.r=texture(scene,clamp(u+vec2(ca,0.),.001,.999)).r;
+    col.b=texture(scene,clamp(u-vec2(ca,0.),.001,.999)).b;
+  }
+  col.rgb*=mix(vec3(.86,.93,1.),vec3(1.,.87,.74),(sin(T*.05)*.5+.5)*fx*.55);
+  if(fgVis){
+    float dist=length(uv-mouse);
+    col.rgb+=vec3(.28,.58,1.)*exp(-dist*dist*130.)*.65;
+    col.rgb+=vec3(.28,.58,1.)*exp(-dist*dist*20.)*.32;
+    float rip=sin(dist*65.-T*5.5)*.5+.5;
+    col.rgb+=vec3(.5,.82,1.)*rip*exp(-dist*16.)*.18;
+    if(par>.05){ float ring=abs(sin(dist*32.-T*2.2))*exp(-dist*9.); col.rgb+=vec3(.18,.38,.9)*ring*par*.45; }
+  }
+  col.rgb+=(fract(sin(dot(uv,vec2(127.1,311.7))+T*.14)*43758.5)-.5)*.02;
+  C=col;
+}`);
+
+function mkTex(src){
+  const t=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,src);
+  [gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER,gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T].forEach((k,i)=>gl.texParameteri(gl.TEXTURE_2D,k,[gl.LINEAR,gl.LINEAR,gl.CLAMP_TO_EDGE,gl.CLAMP_TO_EDGE][i]));
+  return t;
+}
+
+function initThumbs(){
+  const defs={
+    bg:c=>{const g=c.createLinearGradient(0,0,30,30);g.addColorStop(0,'#0e1b40');g.addColorStop(1,'#1c0e30');c.fillStyle=g;c.fillRect(0,0,30,30);for(let i=0;i<8;i++){c.fillStyle='rgba(255,255,255,'+(Math.random()*.2+.05)+')';c.beginPath();c.arc(Math.random()*30,Math.random()*30,.5+Math.random(),0,Math.PI*2);c.fill();}},
+    desktop:c=>{const g=c.createLinearGradient(0,0,30,30);g.addColorStop(0,'#1c0a30');g.addColorStop(.5,'#0a1c30');g.addColorStop(1,'#30081c');c.fillStyle=g;c.fillRect(0,0,30,30);const g2=c.createRadialGradient(15,15,0,15,15,12);g2.addColorStop(0,'rgba(198,77,255,.5)');g2.addColorStop(1,'transparent');c.fillStyle=g2;c.fillRect(0,0,30,30);},
+    disp:c=>{c.fillStyle='#111122';c.fillRect(0,0,30,30);for(let y=0;y<5;y++)for(let x=0;x<5;x++){const v=Math.floor(Math.random()*255);c.fillStyle='rgb('+v+','+v+','+v+')';c.fillRect(x*6,y*6,6,6);}},
+    fg:c=>{const g=c.createRadialGradient(15,15,0,15,15,15);g.addColorStop(0,'rgba(77,159,255,.45)');g.addColorStop(1,'transparent');c.fillStyle='rgba(0,0,0,.01)';c.fillRect(0,0,30,30);c.fillStyle=g;c.fillRect(0,0,30,30);},
+  };
+  Object.entries(defs).forEach(([id,fn])=>{
+    const el=document.getElementById('th-'+id);if(!el)return;
+    el.innerHTML='';
+    const c=document.createElement('canvas');c.width=c.height=30;
+    el.appendChild(c);fn(c.getContext('2d'));
+  });
+}
+initThumbs();
+
+let fc=0,lft=0;
+function render(ts){
+  requestAnimationFrame(render);
+  const dt=Math.min((ts-S.lt)/1000,.05);S.lt=ts;S.t+=dt;
+  if(++fc,ts-lft>1000){document.getElementById('perf').textContent=Math.round(fc*1000/(ts-lft))+' fps · WebGL2';fc=0;lft=ts;}
+  const k=9,da=.72;
+  S.svx=S.svx*da+(S.mx-S.sx)*k*dt; S.svy=S.svy*da+(S.my-S.sy)*k*dt;
+  S.sx+=S.svx; S.sy+=S.svy;
+  const asp=cv.width/cv.height;
+  gl.useProgram(bgP);bQ(bgP);
+  u1f(bgP,'T',S.t);
+  const hd=S.deskOn&&!!S.deskTex&&S.vis.desktop;
+  u1b(bgP,'hasDesk',hd);
+  if(hd){bT(bgP,'deskTex',0,S.deskTex);u1f(bgP,'deskBlend',.38);}
+  draw(A);
+  gl.useProgram(dpP);bQ(dpP);
+  bT(dpP,'scene',0,A.t);
+  u1b(dpP,'enabled',S.dispOn&&S.vis.disp);
+  u1b(dpP,'hasMap',!!S.dispTex);
+  if(S.dispTex)bT(dpP,'dispMap',1,S.dispTex);
+  u1f(dpP,'str',S.disp);u1f(dpP,'T',S.t);u1f(dpP,'asp',asp);
+  draw(B);
+  gl.useProgram(fgP);bQ(fgP);
+  bT(fgP,'scene',0,B.t);
+  u2f(fgP,'mouse',S.mx,S.my);
+  u2f(fgP,'spring',S.sx,S.sy);
+  u1f(fgP,'par',S.par);u1f(fgP,'fx',S.fx);u1f(fgP,'T',S.t);
+  u1b(fgP,'fgVis',S.vis.fg);
+  draw(null);
+}
+requestAnimationFrame(render);
+
+const mglow=document.getElementById('mglow');
+const mdot=document.getElementById('mdot');
+const mring=document.getElementById('mring');
+document.addEventListener('mousemove',e=>{
+  S.mx=e.clientX/cv.width; S.my=1-e.clientY/cv.height;
+  mglow.style.left=mdot.style.left=mring.style.left=e.clientX+'px';
+  mglow.style.top=mdot.style.top=mring.style.top=e.clientY+'px';
+});
+document.addEventListener('mousedown',()=>{mring.style.width=mring.style.height='48px';mring.style.opacity='.6';});
+document.addEventListener('mouseup',()=>{mring.style.width=mring.style.height='32px';mring.style.opacity='1';});
+
+function wire(sid,fid,vid,cb){
+  const s=document.getElementById(sid),f=document.getElementById(fid),v=document.getElementById(vid);
+  const up=()=>{const p=((s.value-s.min)/(s.max-s.min))*100;f.style.width=p+'%';cb(+s.value/100);if(v)v.textContent=Math.round(+s.value)+'%';};
+  s.addEventListener('input',up);up();
+}
+wire('s3d','f3d','v3d',v=>{S.par=v;});
+wire('sfx','ffx','vfx',v=>{S.fx=v;});
+wire('sd','fd','vd',v=>{S.disp=v;});
+
+document.getElementById('dtog').addEventListener('click',e=>{
+  const b=e.target.closest('.togbtn');if(!b)return;
+  S.dispOn=b.dataset.s==='on';
+  document.querySelectorAll('#dtog .togbtn').forEach(x=>x.classList.toggle('act',x.dataset.s===b.dataset.s));
+});
+
+document.getElementById('dispfile').addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f)return;
+  const url=URL.createObjectURL(f),img=new Image();
+  img.onload=()=>{
+    if(S.dispTex)gl.deleteTexture(S.dispTex);
+    S.dispTex=mkTex(img);
+    const box=document.getElementById('mprev');
+    box.classList.add('loaded');
+    box.innerHTML='<img src="'+url+'"><span class="mlbl">'+f.name+'</span>';
+    const th=document.getElementById('th-disp');
+    th.innerHTML='';const c=document.createElement('canvas');c.width=c.height=30;th.appendChild(c);
+    c.getContext('2d').drawImage(img,0,0,30,30);
+    URL.revokeObjectURL(url);
+  };img.src=url;
+});
+
+document.getElementById('capbtn').addEventListener('click',async()=>{
+  const st=document.getElementById('capst');
+  st.textContent='Requesting screen access…';st.className='capst';
+  try{
+    const stream=await navigator.mediaDevices.getDisplayMedia({video:{cursor:'never'},audio:false});
+    st.textContent='⏳ Capturing…';
+    const vid=document.createElement('video');vid.srcObject=stream;await vid.play();
+    const oc=document.createElement('canvas');
+    oc.width=Math.min(vid.videoWidth,1024);oc.height=Math.min(vid.videoHeight,1024);
+    oc.getContext('2d').drawImage(vid,0,0,oc.width,oc.height);
+    stream.getTracks().forEach(t=>t.stop());
+    if(S.deskTex)gl.deleteTexture(S.deskTex);
+    S.deskTex=mkTex(oc);S.deskOn=true;
+    const th=document.getElementById('th-desktop');
+    th.innerHTML='';const tc=document.createElement('canvas');tc.width=tc.height=30;
+    tc.getContext('2d').drawImage(oc,0,0,30,30);th.appendChild(tc);
+    st.textContent='✓ Desktop synced';st.className='capst ok';
+  }catch(err){
+    st.textContent=err.name==='NotAllowedError'?'Permission denied':'Failed: '+err.message;
+    st.className='capst err';
+  }
+});
+
+document.querySelectorAll('.eyebtn').forEach(btn=>{
+  btn.addEventListener('click',e=>{
+    e.stopPropagation();
+    const id=btn.dataset.id;
+    S.vis[id]=!S.vis[id];
+    btn.classList.toggle('off',!S.vis[id]);
+    btn.closest('.lyr').style.opacity=S.vis[id]?'1':'0.4';
+  });
+});
+
+document.querySelectorAll('.lyr').forEach(el=>{
+  el.addEventListener('click',e=>{
+    if(e.target.closest('.eyebtn')||e.target.closest('.dh'))return;
+    document.querySelectorAll('.lyr').forEach(l=>l.classList.remove('sel'));
+    el.classList.add('sel');
+  });
+});
+
+let ds=null;
+document.querySelectorAll('.lyr').forEach(el=>{
+  el.addEventListener('dragstart',e=>{ds=el;setTimeout(()=>el.classList.add('dragging'),0);e.dataTransfer.effectAllowed='move';});
+  el.addEventListener('dragend',()=>{el.classList.remove('dragging');document.querySelectorAll('.lyr').forEach(l=>l.classList.remove('drag-over'));});
+  el.addEventListener('dragover',e=>{e.preventDefault();if(ds&&ds!==el)el.classList.add('drag-over');});
+  el.addEventListener('dragleave',()=>el.classList.remove('drag-over'));
+  el.addEventListener('drop',e=>{
+    e.preventDefault();if(!ds||ds===el)return;
+    el.classList.remove('drag-over');
+    const list=document.getElementById('layers'),items=[...list.children];
+    const si=items.indexOf(ds),ti=items.indexOf(el);
+    if(si<ti)list.insertBefore(ds,el.nextSibling);else list.insertBefore(ds,el);
+  });
+});
+</script>
+</body>
+</html>
