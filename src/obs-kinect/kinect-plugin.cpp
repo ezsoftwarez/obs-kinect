@@ -15,12 +15,14 @@
 	along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ******************************************************************************/
 
+#include <obs-kinect/FxVfxHub/FxVfxHub.hpp>
 #include <obs-kinect/KinectDeviceRegistry.hpp>
 #include <obs-kinect/KinectSource.hpp>
 #include <obs-module.h>
 #include <array>
 #include <cstring>
 #include <optional>
+#include <stdexcept>
 
 #ifndef _WIN32
 #pragma GCC visibility push(default)
@@ -489,6 +491,61 @@ static void kinect_video_tick(void* data, float seconds)
 	kinectSource->Update(seconds);
 }
 
+void RegisterFxVfxHub()
+{
+	obs_source_info info = {};
+	info.id           = "kinect_fxvfx_hub";
+	info.type         = OBS_SOURCE_TYPE_FILTER;
+	info.output_flags = OBS_SOURCE_VIDEO;
+
+	info.get_name = [](void*) -> const char*
+	{
+		return obs_module_text("ObsKinect.FxVfxHub");
+	};
+
+	info.create = [](obs_data_t* settings, obs_source_t* source) -> void*
+	{
+		try
+		{
+			auto* hub = new FxVfxHub(source);
+			hub->Update(settings);
+			return hub;
+		}
+		catch (const std::exception& e)
+		{
+			errorlog("failed to create FxVfxHub: %s", e.what());
+			return nullptr;
+		}
+	};
+
+	info.destroy = [](void* data)
+	{
+		delete static_cast<FxVfxHub*>(data);
+	};
+
+	info.update = [](void* data, obs_data_t* settings)
+	{
+		static_cast<FxVfxHub*>(data)->Update(settings);
+	};
+
+	info.get_defaults = [](obs_data_t* settings)
+	{
+		FxVfxHub::SetDefaults(settings);
+	};
+
+	info.get_properties = [](void*) -> obs_properties_t*
+	{
+		return FxVfxHub::GetProperties();
+	};
+
+	info.video_render = [](void* data, gs_effect_t*)
+	{
+		static_cast<FxVfxHub*>(data)->Render();
+	};
+
+	obs_register_source(&info);
+}
+
 void RegisterKinectSource()
 {
 	struct obs_source_info info = {};
@@ -535,6 +592,7 @@ OBSKINECT_EXPORT bool obs_module_load()
 	s_deviceRegistry->Refresh();
 
 	RegisterKinectSource();
+	RegisterFxVfxHub();
 	return true;
 }
 
